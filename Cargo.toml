@@ -1,0 +1,18 @@
+[package]
+name = "md2notion"
+version = "0.1.0"
+edition = "2021"
+description = "Sync a folder of Markdown files to Notion pages"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4", features = ["derive", "env"] }
+pulldown-cmark = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+walkdir = "2"

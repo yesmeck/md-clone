@@ -143,7 +143,12 @@ impl Conv {
             Tag::Emphasis => self.styles.italic = true,
             Tag::Strong => self.styles.bold = true,
             Tag::Strikethrough => self.styles.strikethrough = true,
-            Tag::Link { dest_url, .. } => self.styles.link = Some(dest_url.to_string()),
+            Tag::Link { dest_url, .. } => {
+                // Notion rejects relative paths and #anchors as link URLs;
+                // render those links as plain text instead.
+                let url = dest_url.to_string();
+                self.styles.link = is_linkable(&url).then_some(url);
+            }
             Tag::Image { dest_url, .. } => {
                 self.in_image = true;
                 let url = dest_url.to_string();
@@ -278,6 +283,14 @@ impl Conv {
             None => self.top.push(block),
         }
     }
+}
+
+/// Notion only accepts absolute URLs on rich text links.
+fn is_linkable(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    ["http://", "https://", "mailto:", "tel:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme) && url.len() > scheme.len())
 }
 
 fn paragraph(rich: Vec<Value>) -> Value {
@@ -462,6 +475,17 @@ mod tests {
         assert_eq!(rich[4]["annotations"]["code"], true);
         let link = rich.last().unwrap();
         assert_eq!(link["text"]["link"]["url"], "https://example.com");
+    }
+
+    #[test]
+    fn relative_and_anchor_links_become_plain_text() {
+        let c = convert("[rel](./other.md) [anchor](#setup) [abs](https://example.com) [mail](mailto:a@b.c)\n");
+        let rich = c.blocks[0]["paragraph"]["rich_text"].as_array().unwrap();
+        let link_of = |i: usize| rich[i]["text"].get("link").cloned();
+        assert_eq!(link_of(0), None);
+        assert_eq!(link_of(2), None);
+        assert_eq!(rich[4]["text"]["link"]["url"], "https://example.com");
+        assert_eq!(rich[6]["text"]["link"]["url"], "mailto:a@b.c");
     }
 
     #[test]

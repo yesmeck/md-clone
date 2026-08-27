@@ -190,8 +190,14 @@ pub async fn run(opts: SyncOptions) -> Result<()> {
         let page_id = match entries_by_path.get(&f.rel) {
             Some(v) => {
                 let entry = &v[0];
-                notion.update_entry(&entry.page_id, &title, &f.hash, &now).await?;
-                notion.clear_children(&entry.page_id).await?;
+                notion
+                    .update_entry(&entry.page_id, &title, &f.hash, &now)
+                    .await
+                    .with_context(|| format!("while updating {}", f.rel))?;
+                notion
+                    .clear_children(&entry.page_id)
+                    .await
+                    .with_context(|| format!("while updating {}", f.rel))?;
                 updated += 1;
                 println!("  updated    {}", f.rel);
                 entry.page_id.clone()
@@ -199,14 +205,18 @@ pub async fn run(opts: SyncOptions) -> Result<()> {
             None => {
                 let (id, url) = notion
                     .create_entry(&db_id, &title, &f.rel, &f.hash, &now)
-                    .await?;
+                    .await
+                    .with_context(|| format!("while creating {}", f.rel))?;
                 created += 1;
                 println!("  created    {}  →  {url}", f.rel);
                 id
             }
         };
         if !converted.blocks.is_empty() {
-            notion.append_children(&page_id, &converted.blocks).await?;
+            notion
+                .append_children(&page_id, &converted.blocks)
+                .await
+                .with_context(|| format!("while uploading content of {}", f.rel))?;
         }
     }
 

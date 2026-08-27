@@ -108,8 +108,11 @@ tokens are long-lived; there is no refresh flow. CI should keep using
 - Fenced code blocks with language mapping (unknown languages fall back to
   plain text), block quotes, horizontal rules, and images with `http(s)`
   URLs (local image files cannot be uploaded through the Notion API).
-- Not converted: tables, raw HTML blocks, and footnotes — their text is
-  either rendered as plain paragraphs or skipped.
+- Tables, including inline formatting in cells. Column alignment is ignored
+  (Notion tables have none), and tables longer than 100 rows are split into
+  consecutive table blocks (Notion's per-request limit).
+- Not converted: raw HTML blocks and footnotes — their text is either
+  rendered as plain paragraphs or skipped.
 
 ## Development
 

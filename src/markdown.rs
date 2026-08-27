@@ -9,6 +9,9 @@ const MAX_TEXT_LEN: usize = 2000;
 /// Notion allows at most two levels of nested children per append request;
 /// anything deeper gets flattened to the deepest allowed level.
 const MAX_NESTING: usize = 2;
+/// Notion accepts at most 100 children per block in one request, so longer
+/// tables are split into consecutive table blocks.
+const MAX_TABLE_ROWS: usize = 100;
 
 pub struct Converted {
     /// Text of a leading H1, if the document starts with one. The sync layer
@@ -21,6 +24,7 @@ pub fn convert(md: &str) -> Converted {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
+    opts.insert(Options::ENABLE_TABLES);
 
     let mut conv = Conv::default();
     for ev in Parser::new_ext(md, opts) {
@@ -57,6 +61,13 @@ struct Frame {
     todo: Option<bool>,
 }
 
+/// A table being collected. `cells` belongs to the row currently open.
+struct TableState {
+    width: usize,
+    rows: Vec<Value>,
+    cells: Vec<Value>,
+}
+
 #[derive(Default)]
 struct Conv {
     top: Vec<Value>,
@@ -66,6 +77,7 @@ struct Conv {
     list_ordered: Vec<bool>,
     /// (language, accumulated text) while inside a code block.
     code: Option<(String, String)>,
+    table: Option<TableState>,
     in_image: bool,
 }
 
@@ -129,6 +141,15 @@ impl Conv {
                     text: Vec::new(),
                     children: Vec::new(),
                     todo: None,
+                });
+            }
+            Tag::Table(alignments) => {
+                // Notion tables have no per-column alignment; it is ignored.
+                self.flush_rich();
+                self.table = Some(TableState {
+                    width: alignments.len().max(1),
+                    rows: Vec::new(),
+                    cells: Vec::new(),
                 });
             }
             Tag::BlockQuote(_) => {
@@ -224,6 +245,44 @@ impl Conv {
                 let mut block = json!({"object": "block", "type": key});
                 block[key] = body;
                 self.push_block(block);
+            }
+            TagEnd::TableCell => {
+                let rich = std::mem::take(&mut self.rich);
+                if let Some(t) = &mut self.table {
+                    t.cells.push(Value::Array(rich));
+                }
+            }
+            // The header emits its cells directly inside TableHead, so it
+            // closes a row just like TableRow does.
+            TagEnd::TableHead | TagEnd::TableRow => {
+                if let Some(t) = &mut self.table {
+                    let mut cells = std::mem::take(&mut t.cells);
+                    // Every row must have exactly `table_width` cells.
+                    cells.resize(t.width, Value::Array(Vec::new()));
+                    t.rows.push(json!({
+                        "object": "block",
+                        "type": "table_row",
+                        "table_row": { "cells": cells },
+                    }));
+                }
+            }
+            TagEnd::Table => {
+                if let Some(t) = self.table.take() {
+                    let mut header = true;
+                    for chunk in t.rows.chunks(MAX_TABLE_ROWS) {
+                        self.push_block(json!({
+                            "object": "block",
+                            "type": "table",
+                            "table": {
+                                "table_width": t.width,
+                                "has_column_header": header,
+                                "has_row_header": false,
+                                "children": chunk,
+                            },
+                        }));
+                        header = false;
+                    }
+                }
             }
             TagEnd::BlockQuote(_) => {
                 self.flush_rich();
@@ -389,6 +448,12 @@ fn flatten_deep(blocks: Vec<Value>, depth: usize) -> Vec<Value> {
     let mut out = Vec::new();
     for mut b in blocks {
         let type_key = b["type"].as_str().unwrap_or_default().to_string();
+        // A table's rows are structural, not nested content: they stay
+        // attached, and count as one level below the table (see below).
+        if type_key == "table" {
+            out.push(b);
+            continue;
+        }
         let kids = b[type_key.as_str()]["children"].take();
         if let Some(obj) = b[type_key.as_str()].as_object_mut() {
             obj.remove("children");
@@ -399,8 +464,16 @@ fn flatten_deep(blocks: Vec<Value>, depth: usize) -> Vec<Value> {
                 out.push(b);
                 out.extend(kids);
             } else {
-                b[type_key.as_str()]["children"] = Value::Array(kids);
+                // A table kid at depth+1 carries its rows at depth+2; hoist
+                // it next to its parent when that would exceed the limit.
+                let (nested, hoisted): (Vec<_>, Vec<_>) = kids
+                    .into_iter()
+                    .partition(|k| k["type"] != "table" || depth + 2 <= MAX_NESTING);
+                if !nested.is_empty() {
+                    b[type_key.as_str()]["children"] = Value::Array(nested);
+                }
                 out.push(b);
+                out.extend(hoisted);
             }
         } else {
             out.push(b);
@@ -588,6 +661,76 @@ mod tests {
                 .sum()
         }
         assert_eq!(count(&c.blocks), 5);
+    }
+
+    #[test]
+    fn tables_become_table_blocks() {
+        let md = "| Name | *Role* |\n|---|---|\n| Ada | **lead** |\n| Grace | |\n";
+        let c = convert(md);
+        assert_eq!(c.blocks.len(), 1);
+        let table = &c.blocks[0]["table"];
+        assert_eq!(c.blocks[0]["type"], "table");
+        assert_eq!(table["table_width"], 2);
+        assert_eq!(table["has_column_header"], true);
+        let rows = table["children"].as_array().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0]["type"], "table_row");
+        let cell = |r: usize, c: usize| rows[r]["table_row"]["cells"][c].clone();
+        assert_eq!(cell(0, 0)[0]["text"]["content"], "Name");
+        assert_eq!(cell(1, 0)[0]["text"]["content"], "Ada");
+        assert_eq!(cell(1, 1)[0]["annotations"]["bold"], true);
+        // Missing cells are padded so every row matches table_width.
+        assert_eq!(cell(2, 1), json!([]));
+    }
+
+    #[test]
+    fn deeply_nested_tables_are_hoisted() {
+        let md = "- a\n  - b\n    | H |\n    |---|\n    | x |\n";
+        let c = convert(md);
+        // The table's rows count as a nesting level, so the table itself
+        // must end up at depth <= 1.
+        fn tables_ok(blocks: &[Value], depth: usize) -> bool {
+            blocks.iter().all(|b| {
+                let t = b["type"].as_str().unwrap();
+                if t == "table" {
+                    return depth + 1 <= MAX_NESTING
+                        && b["table"]["children"].as_array().is_some();
+                }
+                b[t]["children"]
+                    .as_array()
+                    .map(|k| tables_ok(k, depth + 1))
+                    .unwrap_or(true)
+            })
+        }
+        assert!(tables_ok(&c.blocks, 0));
+        // The table itself survived somewhere in the tree.
+        fn count_tables(blocks: &[Value]) -> usize {
+            blocks
+                .iter()
+                .map(|b| {
+                    let t = b["type"].as_str().unwrap();
+                    if t == "table" {
+                        return 1;
+                    }
+                    b[t]["children"].as_array().map(|k| count_tables(k)).unwrap_or(0)
+                })
+                .sum()
+        }
+        assert_eq!(count_tables(&c.blocks), 1);
+    }
+
+    #[test]
+    fn long_tables_split_at_row_limit() {
+        let mut md = String::from("| N |\n|---|\n");
+        for i in 0..150 {
+            md.push_str(&format!("| {i} |\n"));
+        }
+        let c = convert(&md);
+        assert_eq!(c.blocks.len(), 2);
+        assert_eq!(c.blocks[0]["table"]["children"].as_array().unwrap().len(), 100);
+        assert_eq!(c.blocks[1]["table"]["children"].as_array().unwrap().len(), 51);
+        assert_eq!(c.blocks[0]["table"]["has_column_header"], true);
+        assert_eq!(c.blocks[1]["table"]["has_column_header"], false);
     }
 
     #[test]

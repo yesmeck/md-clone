@@ -40,6 +40,12 @@ fn is_not_found(e: &anyhow::Error) -> bool {
         .unwrap_or(false)
 }
 
+fn is_bad_request(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<ApiError>()
+        .map(|api| api.status == 400)
+        .unwrap_or(false)
+}
+
 pub enum ParentKind {
     Database,
     Page,
@@ -131,14 +137,17 @@ impl Notion {
         }
     }
 
-    /// Is the given ID a database or a plain page?
+    /// Is the given ID a database or a plain page? Notion answers a
+    /// database-retrieve for a page ID with 400 ("is a page, not a
+    /// database"), and with 404 when the ID is unknown or unshared — both
+    /// mean "not a database here", so both fall through to the page probe.
     pub async fn identify(&self, id: &str) -> Result<ParentKind> {
         match self
             .request(Method::GET, &format!("/databases/{id}"), None)
             .await
         {
             Ok(_) => Ok(ParentKind::Database),
-            Err(e) if is_not_found(&e) => {
+            Err(e) if is_not_found(&e) || is_bad_request(&e) => {
                 match self.request(Method::GET, &format!("/pages/{id}"), None).await {
                     Ok(_) => Ok(ParentKind::Page),
                     Err(e2) if is_not_found(&e2) => bail!(

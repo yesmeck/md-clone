@@ -44,9 +44,20 @@ pub async fn run(opts: SyncOptions) -> Result<()> {
         .parent
         .context("pass --parent <page or database URL/ID> or set MD2NOTION_PARENT")?;
     let parent_id = normalize_id(&parent)?;
-    let token = opts
-        .token
-        .context("no Notion token — pass --token or set NOTION_TOKEN")?;
+    let token = match opts.token {
+        Some(t) => t,
+        None => match crate::auth::load_credentials()? {
+            Some(creds) => {
+                if let Some(ws) = &creds.workspace_name {
+                    println!("using stored OAuth credentials (workspace {ws:?})");
+                }
+                creds.access_token
+            }
+            None => bail!(
+                "no Notion token — pass --token, set NOTION_TOKEN, or run `md2notion login`"
+            ),
+        },
+    };
     let notion = Notion::new(token)?;
 
     // Resolve the managed database: --parent may be the database itself, or

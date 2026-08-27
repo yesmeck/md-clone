@@ -27,7 +27,7 @@ without ever creating duplicates.
 ## Usage
 
 ```sh
-export NOTION_TOKEN=ntn_xxx                 # or pass --token
+export NOTION_TOKEN=ntn_xxx                 # or pass --token, or use OAuth (below)
 export MD2NOTION_PARENT="https://www.notion.so/acme/Docs-1a2b..."   # or pass --parent
 
 md2notion sync ./docs
@@ -49,6 +49,30 @@ Options:
 | `--dry-run` | Query Notion and print the create/update/skip plan without changing anything. |
 | `--force` | Re-upload files even when their content hash is unchanged. |
 | `--prune` | Archive Notion pages whose source file has been deleted. |
+
+## OAuth login (optional)
+
+Instead of an integration secret, you can log in through Notion's OAuth
+consent screen — its "select pages to share" step replaces manually
+connecting the integration to a page. Notion has no device flow, so this
+requires a **public integration** of your own:
+
+1. At <https://www.notion.so/my-integrations>, make the integration public
+   and copy its **OAuth client ID** and **OAuth client secret**.
+2. Add `http://localhost:8237/callback` to its redirect URIs (or pick
+   another port and pass `--port`).
+3. Log in — the browser opens, you approve, the token is stored in
+   `~/.config/md2notion/credentials.json` (mode 0600):
+
+   ```sh
+   md2notion login --client-id <ID> --client-secret <SECRET>
+   # or via NOTION_OAUTH_CLIENT_ID / NOTION_OAUTH_CLIENT_SECRET
+   ```
+
+`sync` resolves its token as: `--token` → `NOTION_TOKEN` → stored login.
+`md2notion logout` removes the stored credentials. Notion's OAuth access
+tokens are long-lived; there is no refresh flow. CI should keep using
+`NOTION_TOKEN` — a headless runner can't do a browser flow.
 
 ## How syncing works
 

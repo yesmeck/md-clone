@@ -1,3 +1,4 @@
+mod auth;
 mod markdown;
 mod notion;
 mod sync;
@@ -28,7 +29,7 @@ enum Command {
         #[arg(long, env = "MD2NOTION_PARENT")]
         parent: Option<String>,
 
-        /// Notion integration token
+        /// Notion token; falls back to credentials stored by `login`
         #[arg(long, env = "NOTION_TOKEN", hide_env_values = true)]
         token: Option<String>,
 
@@ -44,6 +45,26 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+
+    /// Log in with OAuth using your own Notion public integration. Opens the
+    /// browser, then stores the access token in ~/.config/md2notion/.
+    Login {
+        /// OAuth client ID of your public integration
+        #[arg(long, env = "NOTION_OAUTH_CLIENT_ID")]
+        client_id: String,
+
+        /// OAuth client secret of your public integration
+        #[arg(long, env = "NOTION_OAUTH_CLIENT_SECRET", hide_env_values = true)]
+        client_secret: String,
+
+        /// Localhost port for the OAuth redirect. Your integration must list
+        /// http://localhost:<port>/callback as a redirect URI.
+        #[arg(long, default_value_t = 8237)]
+        port: u16,
+    },
+
+    /// Remove credentials stored by `login`
+    Logout,
 }
 
 #[tokio::main]
@@ -67,6 +88,19 @@ async fn main() -> Result<()> {
                 dry_run,
             })
             .await
+        }
+        Command::Login {
+            client_id,
+            client_secret,
+            port,
+        } => auth::login(&client_id, &client_secret, port).await,
+        Command::Logout => {
+            if auth::logout()? {
+                println!("Logged out — stored credentials removed.");
+            } else {
+                println!("No stored credentials found.");
+            }
+            Ok(())
         }
     }
 }

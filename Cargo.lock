@@ -643,6 +643,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "getrandom 0.2.17",
  "pulldown-cmark",
  "reqwest",
  "serde",

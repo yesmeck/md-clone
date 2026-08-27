@@ -84,8 +84,8 @@ pub async fn login(client_id: &str, client_secret: &str, port: u16) -> Result<()
     // Bind before opening the browser so the redirect can't race us.
     let listener = TcpListener::bind(("127.0.0.1", port))
         .await
-        .with_context(|| format!("could not listen on 127.0.0.1:{port} — is it in use? (--port picks another; remember to register the matching redirect URI)"))?;
-    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+        .with_context(|| format!("could not listen on localhost:{port} — is it in use? (--port picks another; remember to register the matching redirect URI)"))?;
+    let redirect_uri = format!("http://localhost:{port}/callback");
     let state = random_hex(16)?;
 
     let auth_url = format!(
@@ -287,8 +287,8 @@ mod tests {
 
     #[test]
     fn percent_encoding_roundtrip() {
-        let uri = "http://127.0.0.1:8237/callback";
-        assert_eq!(percent_encode(uri), "http%3A%2F%2F127.0.0.1%3A8237%2Fcallback");
+        let uri = "http://localhost:8237/callback";
+        assert_eq!(percent_encode(uri), "http%3A%2F%2Flocalhost%3A8237%2Fcallback");
         assert_eq!(percent_decode(&percent_encode(uri)), uri);
     }
 

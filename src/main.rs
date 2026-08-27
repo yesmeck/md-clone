@@ -57,8 +57,8 @@ enum Command {
         #[arg(long, env = "NOTION_OAUTH_CLIENT_SECRET", hide_env_values = true)]
         client_secret: String,
 
-        /// Loopback port for the OAuth redirect. Your integration must list
-        /// http://127.0.0.1:<port>/callback as a redirect URI.
+        /// Localhost port for the OAuth redirect. Your integration must list
+        /// http://localhost:<port>/callback as a redirect URI.
         #[arg(long, default_value_t = 8237)]
         port: u16,
     },

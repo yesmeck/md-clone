@@ -59,7 +59,7 @@ requires a **public integration** of your own:
 
 1. At <https://www.notion.so/my-integrations>, make the integration public
    and copy its **OAuth client ID** and **OAuth client secret**.
-2. Add `http://localhost:8237/callback` to its redirect URIs (or pick
+2. Add `http://127.0.0.1:8237/callback` to its redirect URIs (or pick
    another port and pass `--port`).
 3. Log in — the browser opens, you approve, the token is stored in
    `~/.config/md2notion/credentials.json` (mode 0600):
